@@ -1,0 +1,194 @@
+<?php
+function getFormat($name)
+{
+    return strrchr($name, '.') !== false
+        ? strtolower(str_replace('.', '', strrchr($name, '.')))
+        : '';
+}
+
+function isFunctionExecEnable()
+{
+    return function_exists('exec')
+        && isFunctionDisable('exec') == false;
+}
+
+function isFunctionDisable($func)
+{
+    $list = @ini_get('disable_functions');
+
+    if (empty($list) == false) {
+        $func = strtolower(trim($func));
+        $list = explode(',', $list);
+
+        foreach ($list as $e) {
+            if (strtolower(trim($e)) == $func) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+$path = isset($_GET['c']) && !empty($_GET['c']) ? rawurldecode($_GET['c']) : '';
+$dirEncode = !empty($path) ? rawurlencode($path) : '';
+if (file_exists($path) && is_file($path)) {
+  $content = file_get_contents($path);
+} else {
+  exit();  
+}
+
+if (!isset($_POST['content'])) {
+    $actionEdit = 'edit.php?c=' . $dirEncode.'&go=Syntax';
+    $fileExt = getFormat(basename($path));
+
+    $codeLang = 'text';
+    $codeType = [
+        'text' => 'Text',
+        'php' => 'PHP',
+        'javascript' => 'JavaScript',
+        'html' => 'HTML',
+        'css' => 'CSS',
+        'json' => 'JSON'
+    ];
+
+    $forCM = [
+        'js' => 'javascript',
+        'css' => 'css'
+    ];
+
+    $fileExtForCM = $fileExt;
+    if (array_key_exists($fileExt, $forCM)) {
+        $fileExtForCM = str_replace($fileExt, $forCM[$fileExt], $fileExtForCM);
+    }
+
+    if (array_key_exists(
+        $fileExtForCM,
+        $codeType
+    )) {
+        $codeLang = $fileExtForCM;
+    }
+    echo '
+            <div class="rb">
+                Loại code:
+                <select id="code_lang">';
+foreach ($codeType as $cType => $cValue) {
+        $cSeleted = $codeLang == $cType ? 'selected="selected"' : '';
+        echo "<option {$cSeleted} value=\"{$cType}\">{$cValue}</option>";
+    }
+   echo '</select> | <input type="checkbox" id="code_wrap" /> Wrap          
+        </div><form id="code_form" action="">      
+                <textarea id="content" style="display: none">' . PHP_EOL . htmlspecialchars($content) . '</textarea><div id="editor"></div>
+            </div><div id="code_wrap">
+            <input id="button" type="submit" value="Save" />
+        </form>
+        
+        <div id="code_check_message" class="rb">
+    </div>';
+
+    echo '<script src="https://cdn.jsdelivr.net/gh/revuto9x/icon/Syntax.js"></script><script>
+    const codeCheckMessageElement = document.getElementById("code_check_message")
+    const codeFormElement = document.getElementById("code_form")
+    const editorElement = document.getElementById("editor")
+
+    document.addEventListener("DOMContentLoaded", function() {
+        editorElement.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+
+    function save() {
+
+        var meta = document.querySelector("meta[name=\'csrf-token\']");
+        var token = meta ? meta.getAttribute("content") : "";
+
+        var data = new FormData();
+        data.append("requestApi", 1);
+        data.append("content", editor.state.doc.toString());
+
+        data.append("csrf_token", token);
+
+        codeCheckMessageElement.innerHTML = "";
+
+        fetch("' . $actionEdit . '", {
+            method: "POST",
+            body: data,
+            cache: "no-cache"
+        }).then(function (response) {
+            if (response.status != 200) {
+                alert("Lỗi kết nối!");
+                return false;
+            }
+
+            return response.json();
+        }).then((data) => {
+            alert(data.message)
+
+            if (data.error) {
+                codeCheckMessageElement.innerHTML = data.error;
+            }
+        });
+    }
+
+    codeFormElement.addEventListener("submit", function (event) {
+        event.preventDefault();
+        save()
+    })
+
+    document.addEventListener("keydown", function(event) {
+        if (event.ctrlKey && event.key === "s") {
+            event.preventDefault()
+            save()
+        }
+    });
+</script>';
+
+} else {
+
+$data = [
+    'status' => false,
+    'message' => 'error'
+];
+
+$content = $_POST['content'];
+
+if (file_put_contents($path, $content) !== false) {
+
+        $data['status'] = true;
+        $error_syntax = 'Lưu thành công! Không thể kiểm tra lỗi';
+
+        if (isFunctionExecEnable()) {
+            // FIX TẠI ĐÂY: Dùng 'php' thay vì PHP_BINARY để tránh lỗi
+            $phpPath = 'php';
+
+            $safePath = escapeshellarg($path);
+            
+            // Dùng -l để check syntax, thêm 2>&1 để lấy nội dung lỗi
+            $command = $phpPath . ' -l ' . $safePath . ' 2>&1';
+
+            $output = [];
+            $value = -1;
+            exec($command, $output, $value);
+
+            if ($value === 0) {
+                $error_syntax = 'Lưu thành công! Không có lỗi';
+            } else {
+                // Lấy dòng lỗi đầu tiên và xóa đường dẫn file thật để bảo mật (giống code cũ của bạn)
+                $raw_error = isset($output[0]) ? $output[0] : 'Lỗi không xác định';
+                $clean_error = str_replace($path, '...', $raw_error);
+                
+                $error_syntax = 'Lưu thành công! Có lỗi: ' . $clean_error;
+                $data['error'] = $clean_error;
+            }
+        }
+
+        $data['message'] = $error_syntax;
+        
+    } else {
+        $data['message'] = 'Lưu lại thất bại';
+    }
+
+    @ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data);
+    exit();
+}
+?>
